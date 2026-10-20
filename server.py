@@ -30,6 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import lcu_stats
+import rift_db
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
@@ -46,7 +47,11 @@ _state = {
     "last_sync": 0.0,
     "last_error": None,
     "syncing": False,
+    "db_error": None,
+    "db_synced": False,
 }
+
+USE_DB = True
 
 
 # --------------------------------------------------------------------------- #
@@ -61,6 +66,22 @@ def cached_payload() -> dict:
     return lcu_stats.build_payload(roster, matches, champs, me)
 
 
+def _db_enabled() -> bool:
+    return USE_DB and rift_db.configured()
+
+
+def _db_pull() -> dict | None:
+    if not _db_enabled():
+        return None
+    try:
+        payload = rift_db.pull_payload()
+        return payload if payload.get("matches") else None
+    except Exception as exc:  # noqa: BLE001
+        with _lock:
+            _state["db_error"] = str(exc)
+        return None
+
+
 def do_sync(force: bool = False) -> dict:
     global _state
     with _lock:
@@ -72,24 +93,43 @@ def do_sync(force: bool = False) -> dict:
 
     try:
         payload, me = lcu_stats.sync(pages=3, verbose=False)
+        db_error = None
+        db_synced = False
+        if _db_enabled():
+            try:
+                rift_db.push_payload(payload)
+                remote = rift_db.pull_payload()
+                if remote.get("matches"):
+                    payload = remote
+                db_synced = True
+            except Exception as exc:  # noqa: BLE001
+                db_error = str(exc)
+
         with _lock:
             _state.update(
                 payload=payload,
                 last_sync=time.time(),
                 last_error=None,
                 syncing=False,
+                db_error=db_error,
+                db_synced=db_synced,
             )
     except Exception as exc:  # noqa: BLE001
+        payload = _db_pull()
+        if payload is None:
+            try:
+                payload = cached_payload()
+            except Exception:
+                payload = None
         with _lock:
             _state["last_error"] = str(exc)
             _state["syncing"] = False
             _state["last_sync"] = time.time()
-        if not _state["payload"]:
-            try:
-                with _lock:
-                    _state["payload"] = cached_payload()
-            except Exception:
-                pass
+            _state["db_synced"] = False
+            if payload and payload.get("matches"):
+                _state["payload"] = payload
+            elif _state["payload"] is None:
+                _state["payload"] = payload
     return _state
 
 
@@ -98,8 +138,8 @@ def get_payload(auto_sync: bool) -> dict:
         do_sync(force=False)
     with _lock:
         payload = _state["payload"]
-    if payload is None:
-        payload = cached_payload()
+    if payload is None or not payload.get("matches"):
+        payload = _db_pull() or payload or cached_payload()
         with _lock:
             _state["payload"] = payload
     return payload
@@ -184,15 +224,22 @@ class Handler(SimpleHTTPRequestHandler):
                 last_error = _state["last_error"]
                 last_sync = _state["last_sync"]
                 payload = _state["payload"]
+                db_error = _state["db_error"]
+                db_synced = _state["db_synced"]
             cached = len(lcu_stats.load_cached_matches())
             self._json(
                 {
-                    "source": "lcu",
+                    "source": (payload or {}).get("source") or "lcu",
                     "lcuAvailable": lcu_stats.find_lockfile() is not None,
                     "lastSync": last_sync,
                     "lastError": last_error,
                     "cachedMatches": cached,
                     "players": len((payload or {}).get("players", [])),
+                    "db": {
+                        "configured": _db_enabled(),
+                        "synced": db_synced,
+                        "lastError": db_error,
+                    },
                 }
             )
             return
@@ -229,12 +276,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Rift Report local server")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-sync", action="store_true", help="serve cache only")
+    parser.add_argument("--no-db", action="store_true", help="ignore Supabase even if configured")
     args = parser.parse_args()
 
     if not WEB_DIR.exists():
         print(f"error: web directory not found at {WEB_DIR}")
         return 1
 
+    global USE_DB
+    USE_DB = not args.no_db
     Handler.auto_sync = not args.no_sync
     mimetypes.add_type("application/javascript", ".js")
 
@@ -250,6 +300,10 @@ def main() -> int:
     print(f"Rift Report -> http://127.0.0.1:{args.port}")
     if args.no_sync:
         print("LCU sync disabled (serving cached data)")
+    if args.no_db or not rift_db.configured():
+        print("Supabase: not configured (local cache only)")
+    else:
+        print(f"Supabase: {rift_db.config()['url']} (push + pull enabled)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

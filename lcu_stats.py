@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CACHE_DIR = ROOT / "cache" / "lcu"
+IMPORTS_DIR = ROOT / "imports"
 DRAGON_CACHE = ROOT / "cache" / "ddragon"
 ROSTER_FILE = ROOT / "players.txt"
 MAYHEM_QUEUE = 2400
@@ -196,15 +197,67 @@ def cache_path(game_id) -> Path:
 
 
 def load_cached_matches() -> list[dict]:
-    if not CACHE_DIR.exists():
+    """Load immutable match details from the local cache plus imported exports.
+
+    ``cache/lcu`` is written by this collector. ``imports/*.json`` holds
+    per-friend exports produced by ``lcu_export.py`` on another client. Matches
+    are de-duplicated by gameId; the local cache wins on conflict.
+    """
+    by_id: dict[str, dict] = {}
+
+    for directory in (IMPORTS_DIR, CACHE_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for detail in _details_from_document(data):
+                game_id = detail.get("gameId")
+                if game_id is None:
+                    continue
+                key = str(game_id)
+                if key not in by_id or directory == CACHE_DIR:
+                    by_id[key] = detail
+    return list(by_id.values())
+
+
+def _details_from_document(data) -> list[dict]:
+    """Accept a raw detail, a list of details, or an export bundle."""
+    if isinstance(data, list):
+        return [d for d in data if isinstance(d, dict)]
+    if not isinstance(data, dict):
         return []
-    matches = []
-    for path in CACHE_DIR.glob("*.json"):
+    if isinstance(data.get("matches"), list):
+        return [d for d in data["matches"] if isinstance(d, dict)]
+    if data.get("gameId") is not None and data.get("participants"):
+        return [data]
+    return []
+
+
+def load_import_rosters() -> list[dict]:
+    """Roster hints embedded in export bundles (name/tag/puuid)."""
+    entries: list[dict] = []
+    if not IMPORTS_DIR.exists():
+        return entries
+    for path in IMPORTS_DIR.glob("*.json"):
         try:
-            matches.append(json.loads(path.read_text(encoding="utf-8")))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-    return matches
+        if not isinstance(data, dict):
+            continue
+        for entry in data.get("roster") or []:
+            if isinstance(entry, dict) and entry.get("puuid"):
+                entries.append(
+                    {
+                        "puuid": entry["puuid"],
+                        "name": entry.get("name"),
+                        "tag": entry.get("tag") or "",
+                    }
+                )
+    return entries
 
 
 # --------------------------------------------------------------------------- #
@@ -341,7 +394,10 @@ def discover_group(matches: list[dict], me_puuid: str | None, min_shared: int = 
 
 
 def resolve_roster(matches: list[dict], me: dict) -> list[dict]:
-    """Merge players.txt with auto-discovery; always include the logged-in user."""
+    """Merge players.txt, export-bundle rosters, and auto-discovery.
+
+    Always includes the logged-in user.
+    """
     entries = load_roster()
     by_puuid: dict[str, dict] = {}
 
@@ -352,8 +408,17 @@ def resolve_roster(matches: list[dict], me: dict) -> list[dict]:
             entry["_pending"] = True
             by_puuid[f"pending:{entry['name']}#{entry['tag']}"] = entry
 
+    # Roster hints carried by per-friend exports.
+    for entry in load_import_rosters():
+        puuid = entry["puuid"]
+        if puuid not in by_puuid:
+            by_puuid[puuid] = {
+                "puuid": puuid,
+                "name": entry.get("name"),
+                "tag": entry.get("tag") or "",
+            }
+
     # Resolve pending Riot IDs against identities seen in cached matches.
-    resolved_keys = set()
     for detail in matches:
         for ident in player_identity(detail).values():
             key = f"pending:{ident['name']}#{ident['tag']}"
@@ -364,9 +429,9 @@ def resolve_roster(matches: list[dict], me: dict) -> list[dict]:
                 entry["name"] = ident["name"]
                 entry["tag"] = ident["tag"]
                 by_puuid[ident["puuid"]] = entry
-                resolved_keys.add(key)
 
-    if not entries:
+    has_named = any(not key.startswith("pending:") for key in by_puuid)
+    if not has_named:
         for item in discover_group(matches, me.get("puuid")):
             by_puuid[item["puuid"]] = item
 
@@ -485,6 +550,7 @@ def build_payload(roster: list[dict], matches: list[dict], champs: dict[int, dic
         players.append(
             {
                 "id": player["id"],
+                "puuid": player.get("puuid"),
                 "name": player.get("name") or "Unknown",
                 "tag": player.get("tag") or "",
                 "initials": player.get("initials") or initials(player.get("name") or "?"),

@@ -47,15 +47,22 @@ python lcu_probe.py --pages 3            # xem JSON thật từ LCU
 ```text
 rift-analysis/
 ├── lcu_probe.py     # probe LCU: summoner, history, match detail, queue 2400
+├── lcu_export.py    # export Mayhem games từ máy của từng người
 ├── lcu_stats.py     # collector + aggregation, cache bất biến theo gameId
+├── rift_db.py       # Supabase push/pull/status (PostgREST, stdlib)
 ├── server.py        # http.server (stdlib), bound 127.0.0.1
+├── supabase/
+│   └── schema.sql   # chạy 1 lần trong SQL Editor
 ├── web/
 │   ├── index.html
 │   ├── styles.css   # Void Hextech theme, responsive 390 → 1440
 │   ├── app.js       # aggregate + render, không thư viện ngoài
 │   ├── demo-data.js # 590 trận mock deterministic (fallback)
 │   └── champions.js # 173 tướng Data Dragon 16.20.1
+├── tests/           # unittest: merge + Supabase row mapping
 ├── players.txt      # roster thật — LOCAL ONLY, đã gitignore
+├── imports/         # export bundles từ máy bạn bè — gitignored
+├── exports/         # output của lcu_export.py — gitignored
 ├── cache/lcu/       # match detail JSON — gitignored
 ├── cache/ddragon/   # champion id → key — gitignored
 └── lcu_debug/       # raw probe output — gitignored
@@ -91,13 +98,62 @@ GameName2#TAG2
 
 ---
 
+## Thu thập từ máy của bạn bè (merge)
+
+Mỗi người chạy exporter trên máy của họ khi League client đang mở:
+
+```powershell
+python lcu_export.py
+# -> exports/rift-export-<ten>-<thoi-gian>.json
+```
+
+Gửi file đó cho máy chạy dashboard, bỏ vào `imports/` (hoặc
+`python rift_db.py push --import <file>`). `lcu_stats.py` tự merge mọi file
+trong `imports/`, dedupe theo `gameId`, cache local thắng khi trùng. Nhờ vậy dữ
+liệu solo Mayhem của từng người cũng được tính.
+
+Bundle chỉ chứa trận Mayhem sau khi kết thúc, danh tính người trong
+`players.txt` + chính người export — không có lockfile, password hay key.
+
+---
+
+## Lưu trữ Supabase (tuỳ chọn)
+
+1. Tạo project tại <https://supabase.com> (hoặc dùng project sẵn có — bảng được
+   prefix `rift_` để không đụng bảng khác).
+2. Mở **SQL Editor**, chạy toàn bộ `supabase/schema.sql`.
+3. Tạo `.env` từ `.env.example`:
+
+   ```text
+   SUPABASE_URL=https://<project>.supabase.co
+   SUPABASE_SERVICE_KEY=<service-role key>
+   ```
+
+4. Kiểm tra và đẩy dữ liệu:
+
+   ```powershell
+   python rift_db.py status
+   python rift_db.py push
+   python rift_db.py pull --out cache/db-stats.json
+   ```
+
+`server.py` tự push sau mỗi lần sync LCU, rồi đọc lại bản canonical từ
+Supabase. Nếu LCU tắt, server vẫn phục vụ dữ liệu Supabase. Tắt bằng
+`python server.py --no-db`.
+
+**Bảo mật:** service-role key bypass RLS, chỉ dùng phía server. Schema bật RLS
+và chỉ cho `anon` quyền `select`; không đưa key vào browser, repo hay file
+export.
+
+---
+
 ## Giới hạn đã biết
 
 - **LCU chỉ trả ~20 trận gần nhất** cho mỗi tài khoản (endpoint bỏ qua
   `begIndex/endIndex` trên client hiện tại). Collector lưu vĩnh viễn từng match
   detail vào `cache/lcu/<gameId>.json`, nên dataset **tăng dần qua mỗi lần
-  sync**. Muốn có lịch sử dài ngay lập tức cần import/merge từ máy của từng
-  người (xem `AGENTS.md` §6, bước 5).
+  sync**. Dùng `lcu_export.py` trên máy từng người để bù phần lịch sử mà một
+  client không thấy.
 - Match detail có đủ 10 người, nhưng chỉ người trong roster được đưa vào
   dashboard.
 - ARAM: Mayhem không có trên Riot Match-V5 public, nên Riot API không phải
@@ -121,6 +177,7 @@ GameName2#TAG2
 
 ```powershell
 python lcu_stats.py --selftest
+python -m unittest discover -s tests -v
 python server.py --no-sync
 # mở http://127.0.0.1:8000
 ```

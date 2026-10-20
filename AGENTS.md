@@ -52,9 +52,16 @@ rift-analysis/
 ├── AGENTS.md          # this handoff / spec
 ├── README.md          # quick start (Vietnamese)
 ├── lcu_probe.py       # LCU probe (GET only)
-├── lcu_stats.py       # collector + cache + aggregation + selftest
+├── lcu_export.py      # per-friend Mayhem export bundle
+├── lcu_stats.py       # collector + cache + merge + aggregation + selftest
+├── rift_db.py         # Supabase push/pull/status (PostgREST)
 ├── server.py          # stdlib HTTP server, 127.0.0.1:8000
+├── supabase/
+│   └── schema.sql     # tables + RLS
+├── tests/             # merge + row-mapping unittest
 ├── players.txt        # real roster (LOCAL ONLY, gitignored)
+├── imports/           # friend export bundles (gitignored)
+├── exports/           # lcu_export.py output (gitignored)
 ├── cache/
 │   ├── lcu/           # immutable match detail JSON per gameId
 │   └── ddragon/       # champion id → key (Data Dragon 16.20.1)
@@ -365,15 +372,33 @@ Frontend changes:
 
 ### Step 5 — Multi-player
 
-Implement only after confirming the chosen option:
+Implemented:
 
-- Shared-only: one LCU client; filter matches where all known friends appear
-  (or include the current user + friends present).
-- Per-friend export: `lcu_export.py --out friend.json`; merge by `gameId`,
-  dedupe participant records, then build the dashboard payload.
-- Hybrid: Riot API for `450`, LCU for `2400`; merge matches by ID.
+- **Shared-only (default):** one LCU client; the dashboard includes shared games
+  plus the logged-in account's own Mayhem games.
+- **Per-friend export:** `lcu_export.py` writes a portable bundle; drop it into
+  `imports/` and `lcu_stats.py` merges by `gameId` (local cache wins). Bundles
+  carry only the exporter + `players.txt` identities, never strangers.
+
+Still optional:
+
+- **Hybrid:** Riot API for classic ARAM `450` + LCU for Mayhem `2400`; merge
+  matches by ID. Not needed while the group only cares about Mayhem.
 
 Do not query other players' data without their consent.
+
+### Step 6 — Supabase persistence
+
+Implemented in `rift_db.py` + `supabase/schema.sql`:
+
+- Tables `rift_players`, `rift_matches`, `rift_participants` (prefixed so they
+  can live in a shared project).
+- `push` upserts players → matches → participants in batches; `pull` rebuilds
+  the exact web payload; `status` reports counts.
+- `server.py` pushes after each LCU sync and serves the canonical Supabase copy;
+  falls back to local cache if the DB is unreachable.
+- DDL and RLS live in `supabase/schema.sql`; the service-role key stays
+  server-side only, anon gets read-only access.
 
 ---
 
@@ -501,9 +526,13 @@ Verified on 2026-10-20 against a live client (patch 16.20.824):
 
 Not yet done:
 
-- [ ] Multi-player merge (per-friend export / hybrid). Currently one LCU client:
-      shared games plus the logged-in account's own games.
-- [ ] Longer history than the client's recent window (accumulates per sync).
+- [ ] Hybrid queue merge (Riot API `450` + LCU `2400`).
+
+Multi-player and storage are live:
+
+- [x] Per-friend export (`lcu_export.py`) + merge in `imports/`.
+- [x] Supabase persistence (`rift_db.py`, `supabase/schema.sql`).
+- [ ] Longer history than the client's recent window still accumulates per sync.
 
 ---
 
