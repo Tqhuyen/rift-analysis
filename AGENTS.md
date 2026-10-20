@@ -2,22 +2,27 @@
 
 ## Vietnamese TL;DR
 
-Dự án thống kê **ARAM: Mayhem** cho nhóm 5 người bạn. Máy gốc
-(`C:\path\to\lol-stats`) đã có CLI Python và web dashboard mock.
-Quyết định cuối: dùng **LCU** trên máy có League client để lấy Mayhem queue
-`2400`, vì Riot Match-V5 public không trả queue này.
+Dự án thống kê **ARAM: Mayhem** cho nhóm bạn. Toàn bộ source nằm trong repo
+này: `lcu_probe.py`, `lcu_stats.py`, `server.py`, `web/`.
 
-Máy mới cần:
+Trạng thái: **đã chạy thật** trên client patch 16.20 — queue `2400` có trong
+match history, cache bất biến theo `gameId`, dashboard live + fallback demo.
 
-1. Mở League client, đăng nhập.
-2. Chạy probe LCU để xem JSON thật.
-3. Viết `lcu_stats.py` + `server.py`.
-4. Nối web với `/api/stats`, test với 3–5 người thật.
+Chạy:
 
-Ba Riot ID hiện nằm trong `players.txt` local (không commit). Còn 2 người.
+```powershell
+python lcu_stats.py
+python server.py
+# http://127.0.0.1:8000
+```
+
+Roster thật nằm trong `players.txt` local (không commit). LCU chỉ trả ~20 trận
+gần nhất mỗi tài khoản, nên dữ liệu tích luỹ dần qua mỗi lần sync; muốn có
+lịch sử sâu hơn cần export từ client của từng người rồi merge.
 
 Không dùng lại Riot API key cũ (đã trả `401 Unknown apikey`). LCU không cần key.
-Không commit lockfile/password/key. Chỉ đọc dữ liệu sau trận, không automate game.
+Không commit lockfile/password/key. Chỉ đọc dữ liệu sau trận, không automate
+game.
 
 ---
 
@@ -33,72 +38,97 @@ The dashboard should answer:
 - Who has the highest loss rate?
 - What are each player's champion pool, KDA, DPM, and recent form?
 
-The UI is already designed and implemented as a static mock dashboard. The next
-step is replacing mock data with real LCU data.
+The UI is implemented and runs on real LCU data, with the original mock
+dashboard kept as an automatic fallback when the API/LCU is unavailable.
 
 ---
 
 ## 2. Where things are
 
-Original PC (source of truth):
+The source now lives in this repo (not only on a separate PC):
 
 ```text
-C:\path\to\lol-stats\
-├── lol_stats.py       # Riot API CLI (Account-V1 + Match-V5), stdlib only
-├── players.txt        # 3 real Riot IDs (local only)
-├── README.md          # CLI + web docs
-├── cache/             # Riot match cache (gitignored)
-└── web/               # static dashboard prototype
+rift-analysis/
+├── AGENTS.md          # this handoff / spec
+├── README.md          # quick start (Vietnamese)
+├── lcu_probe.py       # LCU probe (GET only)
+├── lcu_stats.py       # collector + cache + aggregation + selftest
+├── server.py          # stdlib HTTP server, 127.0.0.1:8000
+├── players.txt        # real roster (LOCAL ONLY, gitignored)
+├── cache/
+│   ├── lcu/           # immutable match detail JSON per gameId
+│   └── ddragon/       # champion id → key (Data Dragon 16.20.1)
+├── lcu_debug/         # raw probe output (gitignored)
+└── web/
     ├── index.html
     ├── styles.css
     ├── app.js
-    ├── demo-data.js   # deterministic mock data
-    ├── champions.js   # 173 champions from Data Dragon 16.20.1
-    └── README.md
+    ├── demo-data.js   # deterministic mock fallback (590 matches)
+    └── champions.js   # 173 champions from Data Dragon 16.20.1
 ```
 
-This GitHub repo contains only handoff docs (`README.md`, `AGENTS.md`). The full
-source is in the local project above. Copy that folder to the LoL machine before
-continuing; if it is missing, recreate the LCU/server parts from this document
-and reuse the web prototype.
+Nothing here requires npm or a build step. No secrets are committed.
 
 ---
 
 ## 3. Current state
 
-### CLI
+**Status: working end-to-end on a real client (patch 16.20.824).**
 
-- `lol_stats.py` is a Python 3 standard-library CLI.
-- Uses Account-V1 (Riot ID → PUUID) and Match-V5 (match IDs + details).
-- Has a sliding-window rate limiter, 429 `Retry-After`, 5xx backoff, atomic
-  `cache/<matchId>.json` cache, aggregation by champion and player, and
-  `--selftest` (offline).
-- Supports `--count`, `--queue`, `--champs`, `--account-region`,
-  `--match-region`, `--players`, `--selftest`.
-- VN defaults: `--account-region asia --match-region sea`.
-- Tested offline; no live match test yet.
+### Key findings from the live LCU
+
+- Queue `2400` **is** present in match history.
+- `/lol-match-history/v1/products/lol/current-summoner/matches` ignores
+  `begIndex`/`endIndex` on this build: it always returns the recent window
+  (21 games, 20 of them Mayhem + 3 Practice Tool in one probe). Plan for
+  incremental accumulation.
+- History summaries contain only the logged-in participant; **full 10-player
+  data requires `/lol-match-history/v1/games/{gameId}`**.
+- Identity fields present: `player.gameName`, `player.tagLine`, `player.puuid`
+  (`summonerName` is empty). Game duration is in seconds; `gameCreation` is ms.
+- `playerAugment1..6` exist in `stats`; the UI does not show them yet.
+
+### Collector (`lcu_stats.py`)
+
+- Stdlib only. `find_lockfile()` (env `LEAGUE_LOCKFILE`, common paths, process
+  path fallback), `LcuClient` with basic auth + unverified local SSL.
+- Caches immutable details in `cache/lcu/<gameId>.json` (atomic write) and never
+  refetches.
+- Roster from `players.txt` (Riot ID lines), resolved to puuid from match data;
+  falls back to auto-discovery of teammates with ≥ 2 shared games.
+- Data Dragon id → champion key, cached 7 days in `cache/ddragon/`.
+- `build_payload()` emits the §7 shape; `summarize()` prints a CLI table;
+  `--selftest` covers aggregation offline.
+
+### Server (`server.py`)
+
+- `ThreadingHTTPServer` on `127.0.0.1`, serves `web/` and the API.
+- Auto-syncs at most every 120 s; serves cache if LCU is down. Path traversal is
+  blocked; no directory listing.
+- `GET /api/stats`, `GET /api/status`, `POST /api/sync`, optional `--no-sync`.
 
 ### Web
 
-- Static HTML/CSS/JS, no build step, no npm.
-- Void Hextech design; responsive at 390/768/1024/1440; tested with Edge CDP.
-- Mock data: 5 fictional players, 590 ARAM: Mayhem matches, 173-champion catalog.
-- Features: KPI cards, Kai'Sa/Ezreal spotlight tabs, damage ranking, top performer,
-  loss radar, insight cards, sortable/filterable champion table, player cards,
-  player drawer, recent matches, mobile menu, demo sync.
-- Mock data shape matches the intended real-data shape; `app.js` aggregates the
-  raw `matches` array in the browser.
+- Vanilla HTML/CSS/JS, no build step. Void Hextech design, responsive at
+  390/768/1024/1440; verified with Playwright + Edge.
+- Data fetched from `/api/stats`; falls back to `demo-data.js` (590 deterministic
+  matches) when the API is unreachable, with a banner and a "Demo data" badge.
+- Features: KPI cards, Kai'Sa/Ezreal spotlight, damage ranking (total/avg/DPM),
+  top performer, loss radar, insights, sortable/filterable champion table, player
+  cards + drawer (focus trap, Escape, focus restore), recent matches, mobile
+  menu, sync button.
+- Verified: no JS errors, no horizontal overflow at 390 px, live and fallback
+  modes both render.
 
 ### Players
 
-`players.txt` on the original PC contains three VN Riot IDs. They are
-intentionally not listed in this public repo. Two more friends are pending.
+`players.txt` holds the real roster locally (gitignored, never in this public
+repo). The collector always includes the logged-in account.
 
 ### Riot API key
 
-- The last Development API key returned `401 {"message":"Unknown apikey"}`.
-- Do not reuse it. Do not put API keys in the repo or browser.
-- LCU does not need a Riot API key.
+- The old Development key returned `401 {"message":"Unknown apikey"}`. Not used.
+- LCU needs no key. Do not put API keys in the repo or browser.
 
 ---
 
@@ -453,21 +483,27 @@ If a new champion appears, regenerate from the latest Data Dragon version.
 
 ## 10. Testing checklist
 
-Before claiming completion:
+Verified on 2026-10-20 against a live client (patch 16.20.824):
 
-- [ ] League client running; `lockfile` found.
-- [ ] Probe returns current summoner.
-- [ ] Match history contains queue `2400` games.
-- [ ] Match detail has 10 participants and stats fields.
-- [ ] Collector caches games and does not refetch.
-- [ ] Server serves the web at `http://127.0.0.1:8000`.
-- [ ] `/api/stats` returns the documented shape.
-- [ ] Web displays real data with 3–5 players.
-- [ ] Champion tabs, table sort/filter, count select still work.
-- [ ] Player drawer opens/closes; Escape works; focus returns.
-- [ ] Mobile 390px has no page-level horizontal overflow.
-- [ ] No JS exceptions.
-- [ ] Mock fallback still works when LCU/server is unavailable.
+- [x] League client running; `lockfile` found.
+- [x] Probe returns current summoner.
+- [x] Match history contains queue `2400` games.
+- [x] Match detail has 10 participants and stats fields.
+- [x] Collector caches games and does not refetch.
+- [x] Server serves the web at `http://127.0.0.1:8000`.
+- [x] `/api/stats` returns the documented shape.
+- [x] Web displays real data with 5 players.
+- [x] Champion tabs, table sort/filter, count select still work.
+- [x] Player drawer opens/closes; Escape works; focus returns.
+- [x] Mobile 390px has no page-level horizontal overflow.
+- [x] No JS exceptions.
+- [x] Mock fallback still works when LCU/server is unavailable.
+
+Not yet done:
+
+- [ ] Multi-player merge (per-friend export / hybrid). Currently one LCU client:
+      shared games plus the logged-in account's own games.
+- [ ] Longer history than the client's recent window (accumulates per sync).
 
 ---
 
@@ -486,10 +522,9 @@ Before claiming completion:
 
 ## 12. Local roster (not committed)
 
-The three current Riot IDs are stored in the local `players.txt` and are
-intentionally not listed in this public repo. Two more friends are pending.
-VN server. For the Riot API path:
-`--account-region asia --match-region sea`.
+The real Riot IDs live in the local `players.txt` (gitignored) and are
+intentionally not listed in this public repo. The collector resolves them to
+puuids from match data and always includes the logged-in account.
 
 The web mock roster is fictional and unrelated:
 
@@ -505,26 +540,33 @@ IntingSion#VN2
 
 ## 13. Handoff checklist
 
-1. Clone this repo on the LoL machine.
-2. Copy the `lol-stats` working folder (or recreate it) next to the repo.
-3. Open League client and log in.
-4. Run `lcu_probe.py`; inspect raw JSON.
-5. Implement `lcu_stats.py`.
-6. Implement `server.py`.
-7. Wire the web to `/api/stats`; keep mock fallback.
-8. Test with 3–5 real accounts.
-9. Add the remaining two Riot IDs.
-10. Update README with the final run command.
+1. [x] Clone this repo on the LoL machine.
+2. [x] Source lives in the repo (`lcu_probe.py`, `lcu_stats.py`, `server.py`, `web/`).
+3. [x] Open League client and log in.
+4. [x] Run `lcu_probe.py`; inspect raw JSON (`lcu_debug/`).
+5. [x] Implement `lcu_stats.py`.
+6. [x] Implement `server.py`.
+7. [x] Wire the web to `/api/stats`; keep mock fallback.
+8. [x] Test with the real roster (5 accounts, shared games + solo games).
+9. [ ] Add per-friend exports / merge to capture friends' solo games.
+10. [x] Update README with the final run command.
 
 ---
 
-## 14. Known risks / open questions
+## 14. Known risks / resolved questions
 
-- Does LCU’s current patch expose queue `2400` in match history? Verify.
-- Does `/lol-match-history/v1/products/lol/{puuid}/matches` work for friends?
-- What identity fields are present in match details on this patch?
-- Will the group use shared-only, per-friend exports, or hybrid?
-- Is the League client installed on the same machine as the development agent?
-- How many recent matches does LCU keep for Mayhem? Paginate until exhausted.
-- Do we need augment data for Mayhem? The current UI does not show augments; skip
-  unless requested.
+- **Resolved:** LCU on 16.20 exposes queue `2400` in match history.
+- **Resolved:** history summaries carry only the logged-in participant; details
+  carry all 10, so fetching details is required.
+- **Resolved:** identity fields are `player.gameName` / `player.tagLine` /
+  `player.puuid`.
+- **Resolved:** the client's history window is ~21 games and ignores
+  `begIndex`/`endIndex`; accumulate via permanent detail cache.
+- **Resolved:** the client is on the development machine; the collector and
+  server run beside it.
+- **Open:** which multi-player option the group wants (shared-only vs per-friend
+  export vs hybrid). Shared-only is live today.
+- **Open:** whether to surface augments. They are already collected in
+  `cache/lcu/` (`playerAugment1..6`) but not rendered.
+- **Open:** friends' solo Mayhem games require each friend to run an exporter on
+  their own client.

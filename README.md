@@ -1,126 +1,137 @@
 # Rift Report — LoL Friend Stats
 
-Dashboard thống kê **ARAM: Mayhem** cho một nhóm 5 người bạn. Repo này là
-**handoff/spec** cho máy có League client; source code đầy đủ nằm trong project
-local trên máy gốc. Đọc `AGENTS.md` trước khi code tiếp.
+Dashboard thống kê **ARAM: Mayhem** (queue `2400`) cho nhóm bạn, chạy hoàn toàn
+cục bộ trên máy có League client. Không cần Riot API key, không build step,
+không dependency ngoài Python standard library.
+
+![Trạng thái](https://img.shields.io/badge/data-League%20Client%20(LCU)-8b5cf6)
+![Python](https://img.shields.io/badge/python-3.10%2B-22d3ee)
 
 ---
 
-## Trạng thái hiện tại
-
-| Phần | Trạng thái |
-|---|---|
-| CLI `lol_stats.py` | Có — Python stdlib, Riot API Account-V1 + Match-V5, cache, selftest |
-| Web `web/` | Có — Void Hextech dashboard, mock data, 173 tướng Data Dragon 16.20.1, responsive, đã test |
-| `players.txt` | 3 Riot ID thật đã thêm local; chờ thêm 2 người |
-| Nguồn dữ liệu | Quyết định dùng **LCU** cho Mayhem queue `2400` |
-| LCU | Chưa test — máy gốc không có League client đang chạy |
-| Riot API key | Key dev cũ trả `401 Unknown apikey`; không dùng nữa |
-
----
-
-## Vì sao dùng LCU
-
-ARAM: Mayhem dùng queue `2400`, nhưng Riot **không trả match queue này qua
-Match-V5 public**. Vì vậy:
-
-- Riot API chỉ dùng được cho ARAM thường `450` và các queue public khác.
-- Muốn số liệu Mayhem thật phải đọc **LCU** (League Client Update API) trên máy
-  đang chạy League client, hoặc import dữ liệu tự thu thập.
-- LCU không cần API key; nó dùng `lockfile` local (port + password tạm).
-
----
-
-## Kiến trúc mục tiêu
-
-```text
-League client (đang chạy)
-        │  lockfile: port + password
-        ▼
-lcu_stats.py / server.py  ──►  cache/lcu/<gameId>.json
-        │  JSON stats
-        ▼
-web/ (HTML/CSS/JS)  ──►  http://127.0.0.1:8000
-```
-
-- `lcu_stats.py`: đọc lịch sử Mayhem của tài khoản đang đăng nhập, lấy match
-  detail, gộp theo tướng/người chơi.
-- `server.py`: `http.server` stdlib, serve `web/` + `/api/stats`, cache; key
-  không bao giờ xuống browser.
-- `web/app.js`: fetch `/api/stats`; fallback về mock data nếu chưa có LCU.
-
----
-
-## Chạy web mock (trên máy gốc)
+## Chạy nhanh
 
 ```powershell
-cd "C:\path\to\lol-stats"
-python -m http.server 8000 --directory web
+cd $HOME\rift-analysis
+
+# 1. Mở League client và đăng nhập (bắt buộc với dữ liệu thật)
+
+# 2. (tuỳ chọn) kiểm tra LCU + queue 2400
+python lcu_probe.py
+
+# 3. Thu thập dữ liệu vào cache
+python lcu_stats.py
+
+# 4. Chạy web
+python server.py
 # mở http://127.0.0.1:8000
 ```
 
-Web mock dùng 5 người chơi giả, 590 trận Mayhem, 173 tướng. Không cần key.
+`server.py` tự đồng bộ từ LCU khi mở trang (tối đa mỗi 2 phút). Nút **Đồng bộ**
+trên web gọi `POST /api/sync`. Nếu LCU không chạy, web tự chuyển sang dữ liệu
+demo và hiện banner — dashboard vẫn dùng được.
+
+### Các tham số hữu ích
+
+```powershell
+python server.py --port 8000 --no-sync   # chỉ phục vụ cache, không gọi LCU
+python lcu_stats.py --json cache/stats.json
+python lcu_stats.py --selftest           # test aggregation offline
+python lcu_probe.py --pages 3            # xem JSON thật từ LCU
+```
 
 ---
 
-## Việc tiếp theo
+## Thành phần
 
-1. Mở League client trên máy có LoL, đăng nhập.
-2. Chạy `lcu_probe.py` để xem JSON thật của LCU:
-   - current summoner
-   - match history
-   - match detail
-   - queue `2400` có xuất hiện không
-3. Viết `lcu_stats.py` + `server.py`.
-4. Nối web với `/api/stats`, bỏ dần mock data.
-5. Test với 3–5 người thật, responsive 390/1440, không lỗi JS.
+```text
+rift-analysis/
+├── lcu_probe.py     # probe LCU: summoner, history, match detail, queue 2400
+├── lcu_stats.py     # collector + aggregation, cache bất biến theo gameId
+├── server.py        # http.server (stdlib), bound 127.0.0.1
+├── web/
+│   ├── index.html
+│   ├── styles.css   # Void Hextech theme, responsive 390 → 1440
+│   ├── app.js       # aggregate + render, không thư viện ngoài
+│   ├── demo-data.js # 590 trận mock deterministic (fallback)
+│   └── champions.js # 173 tướng Data Dragon 16.20.1
+├── players.txt      # roster thật — LOCAL ONLY, đã gitignore
+├── cache/lcu/       # match detail JSON — gitignored
+├── cache/ddragon/   # champion id → key — gitignored
+└── lcu_debug/       # raw probe output — gitignored
+```
 
-Chi tiết endpoint, data model và checklist nằm trong `AGENTS.md`.
+### API
+
+| Endpoint | Mô tả |
+|---|---|
+| `GET /api/stats?count=50&champion=Kaisa` | payload cho dashboard (players, champions, matches) |
+| `GET /api/status` | LCU available, lần sync cuối, số match đã cache |
+| `POST /api/sync` | đồng bộ ngay từ LCU |
+
+Payload dùng đúng shape trong `AGENTS.md` §7; `web/app.js` tự aggregate từ
+`matches`.
 
 ---
 
-## Lưu ý về 5 người
+## Roster
 
-LCU chỉ trả lịch sử của **tài khoản đang đăng nhập**:
+`players.txt` (không commit) — mỗi dòng một Riot ID:
 
-- Trận cả nhóm chơi chung: match detail có đủ 5 người → một client lấy được stats
-  của cả nhóm.
-- Trận mỗi người tự chơi Mayhem: chỉ tài khoản đó có trong lịch sử client của họ.
+```text
+GameName#TAG
+GameName2#TAG2
+```
 
-Ba hướng:
+- Nếu file tồn tại: chỉ những người này được tính.
+- Nếu chưa có: collector tự dò đồng đội xuất hiện **≥ 2 trận cùng team** với
+  tài khoản đang đăng nhập, rồi luôn thêm chính tài khoản đó.
+- Có thể thêm bạn mới bất cứ lúc nào; người chưa từng xuất hiện trong cache sẽ
+  được resolve ở lần sync sau.
 
-1. Chỉ phân tích các trận cả nhóm.
-2. Mỗi người chạy `lcu_export.py` trên client của họ, merge JSON.
-3. Hybrid: Riot API ARAM `450` + LCU Mayhem `2400`.
+---
 
-Chọn hướng trước khi implement phần gộp nhiều người.
+## Giới hạn đã biết
+
+- **LCU chỉ trả ~20 trận gần nhất** cho mỗi tài khoản (endpoint bỏ qua
+  `begIndex/endIndex` trên client hiện tại). Collector lưu vĩnh viễn từng match
+  detail vào `cache/lcu/<gameId>.json`, nên dataset **tăng dần qua mỗi lần
+  sync**. Muốn có lịch sử dài ngay lập tức cần import/merge từ máy của từng
+  người (xem `AGENTS.md` §6, bước 5).
+- Match detail có đủ 10 người, nhưng chỉ người trong roster được đưa vào
+  dashboard.
+- ARAM: Mayhem không có trên Riot Match-V5 public, nên Riot API không phải
+  nguồn thay thế cho queue `2400`.
+- Tên/tag người chơi có thể đổi; puuid mới là khoá ổn định.
 
 ---
 
 ## Bảo mật / Riot
 
-- Không commit `lockfile`, password LCU, Riot API key, hoặc dữ liệu người chơi
-  thật lên repo public.
-- Chỉ đọc dữ liệu sau trận; không automate gameplay, không can thiệp Vanguard.
-- Chỉ dùng cho các tài khoản trong nhóm đã đồng ý.
-- LCU là API local không chính thức; Riot có thể đổi endpoint bất kỳ lúc nào.
-- Không mở LCU port ra internet/ngrok.
+- Chỉ bind `127.0.0.1`; không mở server/LCU ra internet hay ngrok.
+- Không commit `lockfile`, password LCU, API key, `players.txt`, hay dữ liệu
+  người chơi thật.
+- Chỉ đọc dữ liệu sau trận; không automate gameplay/input.
+- Chỉ phân tích tài khoản của những người đã đồng ý.
+- LCU là API nội bộ không chính thức và có thể đổi theo patch.
 
 ---
 
-## Nội dung repo
+## Kiểm thử
 
-```text
-README.md     # file này
-AGENTS.md     # handoff chi tiết cho agent/máy có LoL
+```powershell
+python lcu_stats.py --selftest
+python server.py --no-sync
+# mở http://127.0.0.1:8000
 ```
 
-Source code (`lol_stats.py`, `web/`, `players.txt`, `cache/`) nằm trong project
-local, không đưa lên repo này.
+Đã kiểm tra trên client thật (patch 16.20): queue `2400` xuất hiện, match detail
+có 10 participants, cache không refetch, dashboard render không lỗi JS, không
+overflow ngang ở 390px, fallback demo hoạt động khi chặn `/api/**`.
 
 ---
 
 ## Disclaimer
 
-Không được Riot Games bảo trợ. League of Legends và Riot Games là thương hiệu của
-Riot Games, Inc.
+Không được Riot Games bảo trợ. League of Legends và Riot Games là thương hiệu
+của Riot Games, Inc.

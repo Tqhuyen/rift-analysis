@@ -1,0 +1,8 @@
+# Local secrets / generated data — never commit
+players.txt
+cache/
+lcu_debug/
+__pycache__/
+*.pyc
+*.tmp
+.env

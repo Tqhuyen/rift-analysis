@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rift Report — ARAM: Mayhem</title>
+  <meta name="description" content="Bảng thống kê ARAM: Mayhem cho nhóm bạn — sát thương, KDA, tỉ lệ thắng và phong độ.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%238b5cf6'/%3E%3Cpath d='M32 10l16 22-16 22-16-22z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Bỏ qua điều hướng</a>
+
+  <div class="aurora" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#top" aria-label="Rift Report — về đầu trang">
+        <span class="brand-mark" aria-hidden="true">◆</span>
+        <span class="brand-text">
+          <span class="brand-title">RIFT REPORT</span>
+          <span class="brand-sub">ARAM: MAYHEM</span>
+        </span>
+      </a>
+
+      <nav class="nav" id="main-nav" aria-label="Điều hướng chính">
+        <a href="#overview">Tổng quan</a>
+        <a href="#spotlight">Tâm điểm</a>
+        <a href="#champions">Tướng</a>
+        <a href="#players">Người chơi</a>
+        <a href="#matches">Trận gần đây</a>
+      </nav>
+
+      <div class="topbar-actions">
+        <span class="badge" id="data-badge" data-source="demo" title="Nguồn dữ liệu">
+          <span class="badge-dot" aria-hidden="true"></span>
+          <span id="data-badge-text">Demo data</span>
+        </span>
+        <button class="btn btn-ghost" id="sync-btn" type="button" title="Đồng bộ từ League Client">
+          <span class="btn-icon" aria-hidden="true">⟳</span>
+          <span>Đồng bộ</span>
+        </button>
+        <button class="icon-btn menu-btn" id="menu-btn" type="button"
+                aria-label="Mở menu" aria-expanded="false" aria-controls="main-nav">
+          <span aria-hidden="true">☰</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <p class="eyebrow">VOID HEXTECH · QUEUE 2400</p>
+      <h1>Nhóm mình chơi <span class="grad">Mayhem</span> thế nào?</h1>
+      <p class="lede" id="hero-lede">
+        Sát thương, KDA, tỉ lệ thắng và phong độ của cả nhóm trong ARAM: Mayhem.
+      </p>
+      <div class="hero-meta">
+        <span id="hero-source">Đang tải dữ liệu…</span>
+        <span class="dot" aria-hidden="true">·</span>
+        <span id="hero-updated">—</span>
+      </div>
+    </section>
+
+    <section class="section" id="overview" aria-labelledby="kpi-title">
+      <div class="section-head">
+        <h2 id="kpi-title">Tổng quan</h2>
+        <div class="controls">
+          <label class="field">
+            <span>Khoảng trận</span>
+            <select id="count-select">
+              <option value="50">50 trận gần nhất</option>
+              <option value="100">100 trận gần nhất</option>
+              <option value="0" selected>Tất cả</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="kpi-grid" id="kpi-grid"></div>
+    </section>
+
+    <section class="section" id="spotlight" aria-labelledby="spotlight-title">
+      <div class="section-head">
+        <div>
+          <h2 id="spotlight-title">Tâm điểm tướng</h2>
+          <p class="section-sub" id="spotlight-sub">Ai chơi tốt nhất với tướng được chọn?</p>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Chọn tướng tâm điểm">
+          <button class="tab is-active" role="tab" aria-selected="true" data-champion="Kaisa" id="tab-kaisa">Kai'Sa</button>
+          <button class="tab" role="tab" aria-selected="false" data-champion="Ezreal" id="tab-ezreal">Ezreal</button>
+        </div>
+      </div>
+      <div class="panel spotlight-panel" id="spotlight-panel" role="tabpanel" aria-labelledby="tab-kaisa"></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="section" aria-labelledby="damage-title">
+        <div class="section-head">
+          <h2 id="damage-title">Xếp hạng sát thương</h2>
+          <div class="segmented" role="group" aria-label="Chỉ số xếp hạng">
+            <button class="seg is-active" data-metric="total" type="button">Tổng</button>
+            <button class="seg" data-metric="avg" type="button">Trung bình</button>
+            <button class="seg" data-metric="dpm" type="button">DPM</button>
+          </div>
+        </div>
+        <div class="panel" id="damage-ranking"></div>
+      </section>
+
+      <section class="section" aria-labelledby="performer-title">
+        <div class="section-head">
+          <h2 id="performer-title">Người chơi nổi bật</h2>
+        </div>
+        <div class="panel" id="performer-panel"></div>
+      </section>
+    </div>
+
+    <div class="grid-2">
+      <section class="section" aria-labelledby="loss-title">
+        <div class="section-head">
+          <h2 id="loss-title">Radar thua cuộc</h2>
+          <p class="section-sub">Tỉ lệ thua — càng thấp càng tốt.</p>
+        </div>
+        <div class="panel" id="loss-radar"></div>
+      </section>
+
+      <section class="section" aria-labelledby="insights-title">
+        <div class="section-head">
+          <h2 id="insights-title">Điểm đáng chú ý</h2>
+        </div>
+        <div class="panel insights" id="insights"></div>
+      </section>
+    </div>
+
+    <section class="section" id="champions" aria-labelledby="champions-title">
+      <div class="section-head">
+        <div>
+          <h2 id="champions-title">Bảng tướng</h2>
+          <p class="section-sub" id="champions-sub">Hiệu suất theo từng người chơi và tướng.</p>
+        </div>
+        <label class="field">
+          <span>Lọc tướng</span>
+          <select id="champion-filter"><option value="">Tất cả tướng</option></select>
+        </label>
+      </div>
+      <div class="table-wrap panel">
+        <table class="champ-table" id="champ-table">
+          <thead>
+            <tr>
+              <th scope="col" aria-sort="none"><button data-sort="champion" type="button">Tướng</button></th>
+              <th scope="col" aria-sort="none"><button data-sort="player" type="button">Người chơi</button></th>
+              <th scope="col" aria-sort="none" class="num"><button data-sort="games" type="button">Trận</button></th>
+              <th scope="col" aria-sort="none" class="num"><button data-sort="winrate" type="button">WR</button></th>
+              <th scope="col" aria-sort="none" class="num"><button data-sort="kda" type="button">KDA</button></th>
+              <th scope="col" aria-sort="none" class="num"><button data-sort="avgDamage" type="button">DMG TB</button></th>
+              <th scope="col" aria-sort="none" class="num"><button data-sort="dpm" type="button">DPM</button></th>
+            </tr>
+          </thead>
+          <tbody id="champ-tbody"></tbody>
+        </table>
+        <p class="empty" id="champ-empty" hidden>Không có dữ liệu cho bộ lọc này.</p>
+      </div>
+    </section>
+
+    <section class="section" id="players" aria-labelledby="players-title">
+      <div class="section-head">
+        <div>
+          <h2 id="players-title">Người chơi</h2>
+          <p class="section-sub" id="players-sub">Bấm vào thẻ để xem chi tiết.</p>
+        </div>
+      </div>
+      <div class="player-grid" id="player-grid"></div>
+    </section>
+
+    <section class="section" id="matches" aria-labelledby="matches-title">
+      <div class="section-head">
+        <h2 id="matches-title">Trận gần đây</h2>
+      </div>
+      <div class="panel match-list" id="match-list"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      Rift Report · dữ liệu cục bộ từ League Client (LCU) · không liên kết chính thức với Riot Games.
+    </p>
+    <p class="footer-sub">League of Legends và Riot Games là thương hiệu của Riot Games, Inc.</p>
+  </footer>
+
+  <!-- Player drawer -->
+  <div class="overlay" id="overlay" hidden></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+    <div class="drawer-head">
+      <h2 id="drawer-title">Người chơi</h2>
+      <button class="icon-btn" id="drawer-close" type="button" aria-label="Đóng chi tiết">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="champions.js"></script>
+  <script src="demo-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
