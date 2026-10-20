@@ -4,6 +4,7 @@ players.txt
 cache/
 imports/
 exports/
+snapshots/
 lcu_debug/
 __pycache__/
 *.pyc

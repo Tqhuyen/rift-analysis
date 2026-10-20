@@ -48,9 +48,12 @@ python lcu_probe.py --pages 3            # xem JSON thật từ LCU
 rift-analysis/
 ├── lcu_probe.py     # probe LCU: summoner, history, match detail, queue 2400
 ├── lcu_export.py    # export Mayhem games từ máy của từng người
+├── snapshot.py      # snapshot định kỳ để không mất trận khỏi cửa sổ 21 trận
 ├── lcu_stats.py     # collector + aggregation, cache bất biến theo gameId
 ├── rift_db.py       # Supabase push/pull/status (PostgREST, stdlib)
 ├── server.py        # http.server (stdlib), bound 127.0.0.1
+├── scripts/
+│   └── install-snapshot-task.ps1  # Windows Scheduled Task mỗi 30 phút
 ├── supabase/
 │   └── schema.sql   # chạy 1 lần trong SQL Editor
 ├── web/
@@ -63,6 +66,7 @@ rift-analysis/
 ├── players.txt      # roster thật — LOCAL ONLY, đã gitignore
 ├── imports/         # export bundles từ máy bạn bè — gitignored
 ├── exports/         # output của lcu_export.py — gitignored
+├── snapshots/       # snapshot định kỳ — gitignored
 ├── cache/lcu/       # match detail JSON — gitignored
 ├── cache/ddragon/   # champion id → key — gitignored
 └── lcu_debug/       # raw probe output — gitignored
@@ -144,6 +148,27 @@ Supabase. Nếu LCU tắt, server vẫn phục vụ dữ liệu Supabase. Tắt 
 **Bảo mật:** service-role key bypass RLS, chỉ dùng phía server. Schema bật RLS
 và chỉ cho `anon` quyền `select`; không đưa key vào browser, repo hay file
 export.
+
+---
+
+## Giữ dữ liệu không bị mất (snapshot)
+
+Vì cửa sổ LCU chỉ 21 trận, nên chốt dữ liệu định kỳ:
+
+```powershell
+python snapshot.py                  # chụp ngay, ghi snapshots/rift-<time>.json
+python snapshot.py --keep 500       # giữ 500 bản mới nhất
+
+# Tự động mỗi 30 phút (Task Scheduler, chỉ chạy khi máy bật):
+powershell -ExecutionPolicy Bypass -File scripts\install-snapshot-task.ps1
+```
+
+Script tự thoát với mã 0 khi League client không mở, nên không tạo lỗi trong
+Task Scheduler. Gỡ task:
+
+```powershell
+Unregister-ScheduledTask -TaskName "RiftReportSnapshot" -Confirm:$false
+```
 
 ---
 
